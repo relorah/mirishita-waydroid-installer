@@ -295,8 +295,7 @@ main() {
     configure_network
     launch_play_store
     printf '\n'
-    ok 'MWIのセットアップが完了しました。Google Playにログインしてミリシタをインストールしてください。'
-    printf '画面表示・タッチ・性能調整はMWIの対象外です。\n'
+    ok 'セットアップが完了しました。'
 }
 
 main "$@"
