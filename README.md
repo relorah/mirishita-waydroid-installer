@@ -5,7 +5,8 @@ MWIは、x86_64 Linux PCで「アイドルマスター ミリオンライブ！ 
 ## 対応環境
 
 - x86_64、AMD Radeon（`amdgpu`）
-- CachyOS / Fedora KDE Plasma
+- CachyOS / Arch Linux
+- Fedora（dnfベース、KDE Plasma含む）
 - Wayland
 
 Ryzen 7 9700X + RX 6600XT、AMD BC250にて動作確認済。
@@ -19,7 +20,7 @@ chmod +x install.sh
 ./install.sh
 ```
 
-CachyOSでWaydroidパッケージが既に導入済みの場合も、追加の手動インストールは不要です。installerの`pacman --needed`は、最新のパッケージを再インストールしません。初期化済みのWaydroid設定またはユーザーデータがある場合は、既存データ保護のため停止します。
+CachyOSにWaydroidパッケージが既に入っていても、そのまま実行できます。手動での再インストールは不要です。installerの`pacman -Syu --needed`は、更新不要のパッケージを再インストールせず、古いパッケージは更新します。初期化済みのWaydroid設定またはユーザーデータがある場合は、既存データ保護のため停止します。
 
 ## 実行内容
 
