@@ -19,6 +19,8 @@ chmod +x install.sh
 ./install.sh
 ```
 
+CachyOSでWaydroidパッケージが既に導入済みの場合も、追加の手動インストールは不要です。installerの`pacman --needed`は、最新のパッケージを再インストールしません。初期化済みのWaydroid設定またはユーザーデータがある場合は、既存データ保護のため停止します。
+
 ## 実行内容
 
 Android 11 + Google Play、Houdini（`waydroid_script`経由）、MWI用`test_libnb`を導入し、Waydroidのネットワークを設定します。Houdiniは実行時に取得します。ミリシタAPKは要求・配布しません。
