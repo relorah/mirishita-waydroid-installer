@@ -1,23 +1,24 @@
-# Mirishita Waydroid Installer (MWI)
+# Mirishita Waydroid Installer（MWI）
 
-MWI bootstraps a fresh Waydroid Android 11 environment with Google Play on supported x86_64 Linux PCs with AMD Radeon graphics. It installs the host prerequisites, a pinned Android 11 + GApps image, Houdini through the third-party `waydroid_script` project, MWI's patched `test_libnb`, and Waydroid network setup.
+MWIは、AMD Radeon搭載のx86_64 Linux PCに、Google Playを利用できるWaydroid Android 11環境を新規構築するインストーラです。ホスト側の依存パッケージ、Android 11 + GAppsイメージ、第三者ツール `waydroid_script` 経由のHoudini、MWI用 `test_libnb`、Waydroidのネットワーク設定を用意します。
 
-MWI does **not** include, request, download, or install the Mirishita game APK. After setup, sign in to Google Play and install the game yourself.
+**MWIはミリシタのAPKを同梱・要求・取得・インストールしません。** セットアップ完了後、ユーザー自身がGoogle Playからインストールしてください。
 
-## v0.1.0 support
+## v0.1.0の対応環境
 
-- CachyOS and Arch Linux
-- Regular dnf-based Fedora editions, including Workstation and KDE Plasma Desktop
-- x86_64 host, AMD Radeon GPU using `amdgpu`, DRM render node, and a Wayland desktop session
-- Fresh Waydroid installation only
+- CachyOS / Arch Linux
+- dnf版Fedora（Workstation、KDE Plasma Desktop、通常のSpin）
+- x86_64、AMD Radeon GPU（`amdgpu`）、DRM render node
+- Waylandデスクトップセッション
+- Waydroidの新規インストール
 
-Ubuntu is planned. Intel-only, NVIDIA-only, and Fedora Atomic/Silverblue/Kinoite systems are not supported by this release. Wayland is required by the intended setup; other sessions are not validated.
+Ubuntuは今後の対応予定です。Intelのみ、NVIDIAのみ、Fedora Atomic/Silverblue/Kinoiteは対象外です。既存Waydroid環境を検出すると処理を停止し、データをリセット・削除しません。
 
-This is an early release. The packaged script and binary payload receive static checks in this repository; a fresh install on every supported distribution has not been independently re-run for v0.1.0. Review [known limitations](docs/SETUP.md#known-limitations) before installing.
+本版は初期公開版です。スクリプト構文とパッケージの静的検証は行っていますが、v0.1.0の成果物を使った各ディストリビューションでの新規インストール実機確認は未実施です。[既知の制限](docs/SETUP.md#既知の制限)を確認してください。
 
-## Install
+## インストール
 
-On a supported Linux desktop, open a terminal and run:
+対応Linux PCのターミナルで、通常ユーザーとして実行します。`sudo` でinstaller自体を起動しないでください。
 
 ```bash
 git clone https://github.com/relorah/mirishita-waydroid-installer.git
@@ -26,44 +27,33 @@ chmod +x install.sh
 ./install.sh
 ```
 
-Run as your regular desktop user. The installer asks `sudo` for administrative actions. It intentionally stops if an existing Waydroid installation is detected; it will not reset or delete existing Waydroid data.
+Androidイメージの取得に約1.1 GBかかり、展開分と作業用キャッシュの空き容量も必要です。安定したインターネット接続を用意してください。セットアップ後、Waydroidの初回設定を完了し、自分のGoogleアカウントでPlay Storeにログインしてミリシタをインストールします。
 
-The setup downloads about 1.1 GB of Android images plus Houdini components at runtime. A stable internet connection and several GB of free disk space are required. Follow the first-run Google Play setup in Waydroid, then install Mirishita from Google Play.
+詳しくは[セットアップ・復旧ガイド](docs/SETUP.md)を参照してください。
 
-See [Setup and recovery notes](docs/SETUP.md) for the full flow, verification, and troubleshooting. Japanese instructions are available in [docs/SETUP_JA.md](docs/SETUP_JA.md).
+## MWIの担当範囲
 
-## What the installer changes
+- `pacman` または `dnf` でホスト側パッケージを導入
+- 固定したAndroid 11 system/vendorイメージをSourceForgeから取得し、ZIP整合性と必要なイメージファイルを確認
+- Waydroidを初期化し、Android 11とPlay Storeを確認
+- `install.sh`に記録したcommitの `casualsnek/waydroid_script` を取得し、Android 11向け `libhoudini` の導入を依頼
+- 同梱の32-bit/64-bit `libnb.so` をWaydroid overlayへ配置し、NativeBridgeとARM64 ABIを設定・確認
+- IPv4 forwardingと、利用中のUFW/firewalldに応じたWaydroidネットワーク設定
+- Waydroid UIを起動し、可能ならGoogle Playを前面に表示
 
-- Installs Waydroid and host packages with `pacman` or `dnf`.
-- Downloads fixed Waydroid system/vendor archive filenames from SourceForge, validates ZIP integrity and expected image members, and installs them under `/etc/waydroid-extra/images`.
-- Runs `waydroid init -f` and checks Android 11 and Google Play availability.
-- Downloads the `casualsnek/waydroid_script` source archive at the commit recorded in `install.sh`, creates a local Python virtual environment, and asks that project to install Android 11 `libhoudini`.
-- Copies the bundled 32-bit and 64-bit `libnb.so` files into Waydroid's system overlay, applies the required NativeBridge properties, and checks ARM64 ABI exposure.
-- Enables IPv4 forwarding and adds the Waydroid interface to an active UFW/firewalld configuration where applicable.
-- Starts the Waydroid UI and requests Google Play launch.
+Houdini本体はMWIに含めず、セットアップ時に `waydroid_script` が取得します。このパッケージ方法の説明は、第三者ソフトのライセンスや利用可否について法的結論を示すものではありません。
 
-The installer does not configure MWM display, touch, resolution, frame-rate, or performance features. MWI prepares the base Waydroid environment; MWM is a separate runtime/display/performance manager.
+画面表示、タッチ、解像度、フレームレート、性能調整はMWIの範囲外です。MWIはWaydroidの基盤を構築し、MWMは別の実行・表示・性能管理ツールとして動作します。
 
-## Reproducibility and verification
+## 再現性と検証
 
-- Android images are pinned by their published filenames and source URLs in `install.sh`; the script checks archive integrity and expected members. SourceForge does not publish a checksum in the directory listing used for these files, so MWI does not claim cryptographic authenticity for those downloads.
-- `waydroid_script` is pinned to commit `48dbfaf34a6ddbe78688c530f9ba1c26522aafb2`.
-- `test_libnb` binaries are checked against SHA-256 values embedded in `install.sh` and listed in [`test_libnb/SHA256SUMS`](test_libnb/SHA256SUMS).
-- Houdini binaries are never included in this repository. The installer delegates their retrieval and setup to `casualsnek/waydroid_script` at runtime. This separation describes MWI's packaging; it is not a legal conclusion about third-party licensing or use.
+- Androidイメージはファイル名と取得URLを固定し、ZIP整合性と内部ファイルを確認します。参照したSourceForge一覧にSHA-256値が公開されていないため、暗号学的な配布元検証は行いません。
+- `waydroid_script` はcommit `48dbfaf34a6ddbe78688c530f9ba1c26522aafb2` に固定しています。
+- `test_libnb` のバイナリはinstaller内のSHA-256値で検査し、一覧を [`test_libnb/SHA256SUMS`](test_libnb/SHA256SUMS) に記録しています。
+- ミリシタAPKは含まれず、ユーザーがGoogle Playから導入します。
 
-## Repository contents
+## ライセンスと注意事項
 
-```text
-install.sh                 Installer
-docs/                      Setup, recovery, and licensing notes
-test_libnb/                 MWI source, build script, and required ELF payloads
-LICENSE                    License for MWI-authored installer and documentation
-NOTICE                     Third-party attribution and scope
-LICENSES/                  License texts for included third-party code
-```
+MWI作成部分にはルートの[`LICENSE`](LICENSE)が適用されます。`test_libnb`には個別のGPL-2.0-or-later/BSD-2-Clause帰属とライセンス条件があります。詳細は[`NOTICE`](NOTICE)と[ライセンス・出典の説明](docs/LICENSING.md)を確認してください。
 
-The `test_libnb` directory contains the complete corresponding source and build script for the bundled binaries. See [licensing notes](docs/LICENSING.md) and [`NOTICE`](NOTICE).
-
-## Disclaimer
-
-Waydroid, LineageOS, Google Play, Houdini, Mirishita, and the named distributions are third-party products and marks. MWI is an independent community project and is not affiliated with or endorsed by their respective owners. Users are responsible for following the terms that apply to software and services they obtain or use.
+Waydroid、LineageOS、Google Play、Houdini、ミリシタ、各ディストリビューションは第三者の製品・商標です。MWIは独立したプロジェクトで、各権利者との提携・推奨関係を示すものではありません。取得・利用する第三者ソフトやサービスの条件は、利用者が確認してください。
