@@ -63,7 +63,7 @@ preflight() {
     [[ "$(sha256sum "$LIBNB32" | awk '{print $1}')" == "$LIBNB32_SHA" ]] || die '32-bit libnbのSHA-256が一致しません。'
     [[ "$(sha256sum "$LIBNB64" | awk '{print $1}')" == "$LIBNB64_SHA" ]] || die '64-bit libnbのSHA-256が一致しません。'
     if [[ -e /var/lib/waydroid/waydroid.cfg || -d "$HOME/.local/share/waydroid" ]]; then
-        die '既存のWaydroid環境を検出しました。v0.1.0は新規インストール専用です。既存環境の初期化・削除は行いません。'
+        die 'Waydroidの既存設定またはユーザーデータを検出しました。パッケージが導入済みなだけなら実行できます。既存データ保護のため、初期化済み環境には上書きしません。'
     fi
     sudo -v
     ok "ホストを確認しました: ${PRETTY_NAME:-${ID:-unknown}} ($HOST_FAMILY)"
