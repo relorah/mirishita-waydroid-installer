@@ -1,12 +1,12 @@
 # Mirishita Waydroid Installer（MWI）
 
-MWIは、AMD Radeon搭載のx86_64 Linux PCに、Google Playを利用できるWaydroid Android 11環境を新規構築するインストーラです。ホスト側の依存パッケージ、Android 11 + GAppsイメージ、第三者ツール `waydroid_script` 経由のHoudini、MWI用 `test_libnb`、Waydroidのネットワーク設定を用意します。
+MWIは、x86_64 Linux PCで「アイドルマスター ミリオンライブ！ シアターデイズ（以下、ミリシタ）」をWaydroid上で動かすための環境構築ツールです。
 
-## MWIを使う理由
+ホスト側の依存パッケージ、Android 11 + GAppsイメージ、`waydroid_script`経由のHoudini、MWIで使用する`test_libnb`を導入し、ARM ABI・NativeBridge設定とWaydroidのネットワーク設定を行います。
 
-ミリシタを対象のWaydroid環境で動かすには、HoudiniによるARMアプリの実行に加えて、Houdini周りのNativeBridge設定とミリシタ向け互換処理が必要です。MWIは、Android 11 + GApps、Houdiniの導入、MWI用 `test_libnb`、ARM ABI・NativeBridge設定をまとめて用意し、Google Playからミリシタを導入できる基盤を構築するためのツールです。
+この構成では、HoudiniによるARMアプリの実行と、`test_libnb`によるミリシタ向けの互換処理を組み合わせ、Google Playからミリシタを導入するための基盤を用意します。
 
-**MWIはミリシタのAPKを同梱・要求・取得・インストールしません。** セットアップ完了後、ユーザー自身がGoogle Playからインストールしてください。
+**MWIはミリシタのAPKを同梱・取得・インストールせず、セットアップ時にAPKの提供も求めません。** セットアップ完了後、ユーザー自身がGoogle Playからインストールしてください。
 
 ## v0.1.0の対応環境
 
