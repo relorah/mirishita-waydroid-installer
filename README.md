@@ -5,8 +5,7 @@ MWIは、x86_64 Linux PCで「アイドルマスター ミリオンライブ！ 
 ## 対応環境
 
 - x86_64、AMD Radeon（`amdgpu`）
-- CachyOS
-- Fedora KDE Plasma
+- CachyOS / Fedora KDE Plasma
 - Wayland
 
 Ryzen 7 9700X + RX 6600XT、AMD BC250にて動作確認済。
