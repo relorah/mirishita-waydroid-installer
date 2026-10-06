@@ -2,6 +2,10 @@
 
 MWIは、AMD Radeon搭載のx86_64 Linux PCに、Google Playを利用できるWaydroid Android 11環境を新規構築するインストーラです。ホスト側の依存パッケージ、Android 11 + GAppsイメージ、第三者ツール `waydroid_script` 経由のHoudini、MWI用 `test_libnb`、Waydroidのネットワーク設定を用意します。
 
+## MWIを使う理由
+
+ミリシタを対象のWaydroid環境で動かすには、HoudiniによるARMアプリの実行に加えて、Houdini周りのNativeBridge設定とミリシタ向け互換処理が必要です。MWIは、Android 11 + GApps、Houdiniの導入、MWI用 `test_libnb`、ARM ABI・NativeBridge設定をまとめて用意し、Google Playからミリシタを導入できる基盤を構築するためのツールです。
+
 **MWIはミリシタのAPKを同梱・要求・取得・インストールしません。** セットアップ完了後、ユーザー自身がGoogle Playからインストールしてください。
 
 ## v0.1.0の対応環境
@@ -21,7 +25,13 @@ Ubuntuは今後の対応予定です。Intelのみ、NVIDIAのみ、Fedora Atomi
 | CachyOS | Ryzen 7 9700X + Radeon RX 6600 XT | 導入成功（利用者報告） |
 | CachyOS | BC250 | 導入成功（利用者報告） |
 
-Arch Linux単体とFedoraの実機導入結果は未確認です。この記録は導入成功の報告であり、個別のゲーム動作や全機能の確認結果を示すものではありません。[既知の制限](docs/SETUP.md#既知の制限)も確認してください。
+Arch Linux単体とFedoraの実機導入結果は未確認です。上表は環境の導入結果を記録しています。[既知の制限](docs/SETUP.md#既知の制限)も確認してください。
+
+## アプリの起動報告
+
+ミリシタ向けの環境構築に加え、MWIで構築した環境では**ブルーアーカイブも起動できた**との利用者報告があります（2026-10-06）。同梱 `test_libnb` は、upstreamのブルーアーカイブ向け互換処理を保持しています。
+
+この報告はアプリの起動確認であり、ゲーム内の全機能や長時間プレイの確認結果を示すものではありません。ブルーアーカイブもユーザー自身がGoogle Playから導入してください。
 
 ## インストール
 
