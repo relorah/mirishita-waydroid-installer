@@ -9,6 +9,8 @@ MWIは、x86_64 Linux PCで「アイドルマスター ミリオンライブ！ 
 - Fedora（dnfベース、KDE Plasma含む）
 - Wayland
 
+Ubuntu対応は今後の予定です。
+
 Ryzen 7 9700X + RX 6600XT、AMD BC250にて動作確認済。
 
 ## インストール方法
