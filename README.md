@@ -1,6 +1,6 @@
 # Mirishita Waydroid Installer (MWI)
 
-MWIは、x86_64 Linux PC上のWaydroidで「アイドルマスター ミリオンライブ！ シアターデイズ（以下、ミリシタ）」を動かす環境を整えるツールです。
+MWIは、x86_64 Linux PCで「アイドルマスター ミリオンライブ！ シアターデイズ（以下、ミリシタ）」をWaydroidにて動かす環境を整えるツールです。
 
 ## 対応環境
 
