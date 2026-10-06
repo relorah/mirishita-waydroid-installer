@@ -17,8 +17,8 @@ readonly LIBNB64_SHA='c221eb6770453df298a32bedbcf82a6147f639a1294f37d758f3bcb102
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
-readonly LIBNB32="$SCRIPT_DIR/test_libnb/lib/libnb.so"
-readonly LIBNB64="$SCRIPT_DIR/test_libnb/lib64/libnb.so"
+readonly LIBNB32="$SCRIPT_DIR/payload/lib/libnb.so"
+readonly LIBNB64="$SCRIPT_DIR/payload/lib64/libnb.so"
 readonly WORK_ROOT="${XDG_STATE_HOME:-$HOME/.local/state}/mwi"
 readonly CACHE_DIR="$WORK_ROOT/cache"
 readonly WAYDROID_SCRIPT_DIR="$WORK_ROOT/waydroid_script"
@@ -59,7 +59,7 @@ preflight() {
             ;;
     esac
     [[ -d /sys/module/amdgpu ]] || warn 'amdgpuが未ロードです。パッケージ導入後に再確認します。'
-    [[ -f "$LIBNB32" && -f "$LIBNB64" ]] || die '同梱test_libnbが見つかりません。'
+    [[ -f "$LIBNB32" && -f "$LIBNB64" ]] || die '同梱payloadが見つかりません。'
     [[ "$(sha256sum "$LIBNB32" | awk '{print $1}')" == "$LIBNB32_SHA" ]] || die '32-bit libnbのSHA-256が一致しません。'
     [[ "$(sha256sum "$LIBNB64" | awk '{print $1}')" == "$LIBNB64_SHA" ]] || die '64-bit libnbのSHA-256が一致しません。'
     if [[ -e /var/lib/waydroid/waydroid.cfg || -d "$HOME/.local/share/waydroid" ]]; then
