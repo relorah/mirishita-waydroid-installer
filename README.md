@@ -7,9 +7,10 @@ x86_64 Linux PCで「アイドルマスター ミリオンライブ！ シアタ
 - x86_64、AMD Radeon（`amdgpu`）
 - CachyOS / Arch Linux
 - dnf版Fedora（KDE Plasmaを含む）
+- Ubuntu 24.04 LTS（実験対応）
 - Wayland
 
-動作確認済み環境はCachyOS + KDE Plasmaのみです。Ryzen 7 9700X + Radeon RX 6600 XTおよびAMD BC250で確認しています。Arch LinuxとFedoraは対応対象ですが、実機での導入検証は未実施です。Ubuntuは今後対応予定です。
+動作確認済み環境はCachyOS + KDE Plasmaのみです。Ryzen 7 9700X + Radeon RX 6600 XTおよびAMD BC250で確認しています。Arch Linux、Fedora、Ubuntuは実機での導入検証が未実施です。Ubuntuは24.04 LTS（noble）のみ実験対応しています。
 
 ## インストール方法
 
@@ -22,6 +23,8 @@ chmod +x install.sh
 ```
 
 CachyOSにWaydroidパッケージが既に入っていても、そのまま実行できます。手動での再インストールは不要です。installerの`pacman -Syu --needed`はシステム全体を更新し、更新不要のパッケージは再インストールしません。初期化済みのWaydroid設定またはユーザーデータがある場合は、既存データ保護のため停止します。
+
+UbuntuではWaylandセッションにログインして実行してください。Ubuntuの`universe`と[公式Waydroidリポジトリ](https://docs.waydro.id/usage/install-on-desktops#debian-ubuntu-and-derivatives)を有効にし、`apt-get`で必要なパッケージを導入します。Ubuntu 22.04、26.04やUbuntu派生ディストリビューションは今回の実験対応に含みません。
 
 ## 実行内容
 

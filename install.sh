@@ -24,6 +24,7 @@ readonly CACHE_DIR="$WORK_ROOT/cache"
 readonly WAYDROID_SCRIPT_DIR="$WORK_ROOT/waydroid_script"
 readonly IMAGE_DIR='/etc/waydroid-extra/images'
 HOST_FAMILY=''
+HOST_CODENAME=''
 PYTHON_BIN=''
 
 msg() { printf '\n==> %s\n' "$*"; }
@@ -39,25 +40,38 @@ download() {
     mv "$out.part" "$out"
 }
 
-preflight() {
-    [[ $EUID -ne 0 ]] || die '通常ユーザーで実行してください。installerをsudoで起動しないでください。'
-    [[ "$(uname -m)" == x86_64 ]] || die 'x86_64ホストが必要です。'
-    [[ -r /etc/os-release ]] || die '/etc/os-releaseが見つかりません。'
-    # shellcheck disable=SC1091
-    source /etc/os-release
+detect_host() {
     case "${ID:-}" in
         cachyos|arch) HOST_FAMILY='arch' ;;
         fedora)
             [[ ! -e /run/ostree-booted ]] || die 'Fedora Atomic/Silverblue/Kinoiteは対象外です。'
             HOST_FAMILY='fedora'
             ;;
+        ubuntu)
+            [[ "${VERSION_ID:-}" == 24.04 && "${VERSION_CODENAME:-}" == noble ]] || die 'Ubuntuの実験対応は24.04 LTS（noble）のみです。'
+            HOST_FAMILY='ubuntu'
+            HOST_CODENAME='noble'
+            ;;
         *)
             case " ${ID_LIKE:-} " in
                 *' arch '*) HOST_FAMILY='arch' ;;
-                *) die '対応OSはCachyOS/Archまたは通常のdnf版Fedoraです。' ;;
+                *) die '対応OSはCachyOS/Arch、通常のdnf版Fedora、Ubuntu 24.04 LTSです。' ;;
             esac
             ;;
     esac
+}
+
+preflight() {
+    [[ $EUID -ne 0 ]] || die '通常ユーザーで実行してください。installerをsudoで起動しないでください。'
+    [[ "$(uname -m)" == x86_64 ]] || die 'x86_64ホストが必要です。'
+    [[ -r /etc/os-release ]] || die '/etc/os-releaseが見つかりません。'
+    # shellcheck disable=SC1091
+    source /etc/os-release
+    detect_host
+    if [[ "$HOST_FAMILY" == ubuntu ]]; then
+        [[ "${XDG_SESSION_TYPE:-}" == wayland ]] || die 'UbuntuではWaylandセッションにログインして実行してください。'
+        warn 'Ubuntu 24.04 LTS対応は実験段階です。実機での導入検証は未実施です。'
+    fi
     [[ -d /sys/module/amdgpu ]] || warn 'amdgpuが未ロードです。パッケージ導入後に再確認します。'
     [[ -f "$LIBNB32" && -f "$LIBNB64" ]] || die '同梱payloadが見つかりません。'
     [[ "$(sha256sum "$LIBNB32" | awk '{print $1}')" == "$LIBNB32_SHA" ]] || die '32-bit libnbのSHA-256が一致しません。'
@@ -86,6 +100,25 @@ install_packages() {
                 amd-gpu-firmware amd-ucode-firmware \
                 curl git unzip lzip python3 python3-pip \
                 pipewire pipewire-pulseaudio wireplumber
+            PYTHON_BIN="$(command -v python3)"
+            ;;
+        ubuntu)
+            sudo apt-get update
+            sudo apt-get install -y ca-certificates curl software-properties-common
+            sudo add-apt-repository -y universe
+            # Use the same signed repository as the official Waydroid setup.
+            local key_file="$WORK_ROOT/waydroid.gpg"
+            curl --proto '=https' --tlsv1.2 -fL --retry 5 \
+                https://repo.waydro.id/waydroid.gpg -o "$key_file"
+            [[ -s "$key_file" ]] || die 'Waydroidリポジトリの署名鍵を取得できませんでした。'
+            sudo install -D -m 0644 "$key_file" /usr/share/keyrings/waydroid.gpg
+            printf 'deb [signed-by=/usr/share/keyrings/waydroid.gpg] https://repo.waydro.id/ %s main\n' "$HOST_CODENAME" | \
+                sudo tee /etc/apt/sources.list.d/waydroid.list >/dev/null
+            sudo apt-get update
+            sudo apt-get install -y \
+                waydroid libgl1-mesa-dri mesa-vulkan-drivers linux-firmware \
+                curl git unzip lzip python3 python3-venv python3-pip \
+                pipewire pipewire-pulse wireplumber
             PYTHON_BIN="$(command -v python3)"
             ;;
     *) die "未対応のOSです: $HOST_FAMILY" ;;
