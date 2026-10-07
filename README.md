@@ -1,15 +1,12 @@
 # Mirishita Waydroid Installer (MWI)
 
-MWIは、x86_64 Linux PCで「アイドルマスター ミリオンライブ！ シアターデイズ（以下、ミリシタ）」をWaydroidにて動かす環境を整えるツールです。
+x86_64 Linux PCで「アイドルマスター ミリオンライブ！ シアターデイズ（以下、ミリシタ）」をWaydroidにて動かす環境を整えるツールです。
 
 ## 対応環境
 
 - x86_64、AMD Radeon（`amdgpu`）
-- CachyOS / Arch Linux
-- Fedora（dnfベース、KDE Plasma含む）
+- CachyOS / Fedora KDE Plasma
 - Wayland
-
-Ubuntu対応は今後の予定です。
 
 Ryzen 7 9700X + RX 6600XT、AMD BC250にて動作確認済。
 
@@ -17,6 +14,7 @@ Ryzen 7 9700X + RX 6600XT、AMD BC250にて動作確認済。
 
 ```bash
 git clone https://github.com/relorah/mirishita-waydroid-installer.git
+
 cd mirishita-waydroid-installer
 chmod +x install.sh
 ./install.sh
@@ -26,7 +24,7 @@ CachyOSにWaydroidパッケージが既に入っていても、そのまま実�
 
 ## 実行内容
 
-Android 11 + Google Play、Houdini（`waydroid_script`経由）、MWI用`test_libnb`を導入し、Waydroidのネットワークを設定します。Houdiniは実行時に取得します。ミリシタAPKは要求・配布しません。
+Android 11 + Google Play、Houdini（`waydroid_script`経由）、同梱の`test_libnb`を導入し、Waydroidのネットワーク設定をします。Houdiniは実行時に取得します。ミリシタAPKは要求・配布しません。
 
 ## インストール後
 
