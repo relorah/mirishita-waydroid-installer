@@ -10,8 +10,8 @@ readonly SYSTEM_ZIP='lineage-18.1-20250628-GAPPS-waydroid_x86_64-system.zip'
 readonly VENDOR_ZIP='lineage-18.1-20250628-MAINLINE-waydroid_x86_64-vendor.zip'
 readonly SYSTEM_URL="https://sourceforge.net/projects/waydroid/files/images/system/lineage/waydroid_x86_64/${SYSTEM_ZIP}/download"
 readonly VENDOR_URL="https://sourceforge.net/projects/waydroid/files/images/vendor/waydroid_x86_64/${VENDOR_ZIP}/download"
+readonly WAYDROID_SCRIPT_REPO='https://github.com/casualsnek/waydroid_script.git'
 readonly WAYDROID_SCRIPT_COMMIT='48dbfaf34a6ddbe78688c530f9ba1c26522aafb2'
-readonly WAYDROID_SCRIPT_URL="https://github.com/casualsnek/waydroid_script/archive/${WAYDROID_SCRIPT_COMMIT}.zip"
 readonly LIBNB32_SHA='5274b82eb756f8ca0a384c0ed2c555557395e4d21a32a925727ecbb489ffb51d'
 readonly LIBNB64_SHA='c221eb6770453df298a32bedbcf82a6147f639a1294f37d758f3bcb102852e34'
 
@@ -76,7 +76,7 @@ install_packages() {
         arch)
             sudo pacman -Syu --needed --noconfirm \
                 waydroid mesa vulkan-radeon linux-firmware-amdgpu amd-ucode \
-                curl unzip lzip python pipewire pipewire-pulse wireplumber
+                curl git unzip lzip python pipewire pipewire-pulse wireplumber
             PYTHON_BIN="$(command -v python3 || command -v python)"
             ;;
         fedora)
@@ -84,14 +84,14 @@ install_packages() {
                 waydroid waydroid-selinux \
                 mesa-dri-drivers mesa-vulkan-drivers \
                 amd-gpu-firmware amd-ucode-firmware \
-                curl unzip lzip python3 python3-pip \
+                curl git unzip lzip python3 python3-pip \
                 pipewire pipewire-pulseaudio wireplumber
             PYTHON_BIN="$(command -v python3)"
             ;;
     *) die "未対応のOSです: $HOST_FAMILY" ;;
     esac
     [[ -n "$PYTHON_BIN" && -x "$PYTHON_BIN" ]] || die 'パッケージ導入後にPythonが見つかりません。'
-    for command_name in waydroid curl unzip sha256sum; do
+    for command_name in waydroid curl git unzip sha256sum; do
         command -v "$command_name" >/dev/null 2>&1 || die "必要なコマンドが見つかりません: $command_name"
     done
 }
@@ -149,33 +149,40 @@ install_android11() {
 
 prepare_waydroid_script() {
     msg 'Preparing pinned waydroid_script'
-    mkdir -p "$CACHE_DIR"
-    local archive="$CACHE_DIR/waydroid_script-$WAYDROID_SCRIPT_COMMIT.zip"
-    local unpack="$WORK_ROOT/waydroid_script-unpack"
-    download "$WAYDROID_SCRIPT_URL" "$archive"
-    unzip -tq "$archive" >/dev/null || die 'waydroid_scriptのZIP整合性を確認できません。'
-    rm -rf -- "$unpack" "$WAYDROID_SCRIPT_DIR"
-    mkdir -p "$unpack"
-    unzip -q "$archive" -d "$unpack"
-    local extracted
-    extracted="$(find "$unpack" -mindepth 1 -maxdepth 1 -type d -name 'waydroid_script-*' -print -quit)"
-    [[ -n "$extracted" ]] || die 'waydroid_scriptを展開できませんでした。'
-    mv "$extracted" "$WAYDROID_SCRIPT_DIR"
-    rm -rf -- "$unpack"
+    rm -rf -- "$WAYDROID_SCRIPT_DIR"
+    git init "$WAYDROID_SCRIPT_DIR" >/dev/null
+    git -C "$WAYDROID_SCRIPT_DIR" remote add origin "$WAYDROID_SCRIPT_REPO"
+    git -C "$WAYDROID_SCRIPT_DIR" fetch --depth=1 origin "$WAYDROID_SCRIPT_COMMIT"
+    git -C "$WAYDROID_SCRIPT_DIR" checkout --detach FETCH_HEAD
+    local actual_commit
+    actual_commit="$(git -C "$WAYDROID_SCRIPT_DIR" rev-parse HEAD)"
+    [[ "$actual_commit" == "$WAYDROID_SCRIPT_COMMIT" ]] || die "waydroid_script commit verification failed: $actual_commit"
+    ok "waydroid_script commitを確認しました: $actual_commit"
     "$PYTHON_BIN" -m venv "$WAYDROID_SCRIPT_DIR/venv"
     "$WAYDROID_SCRIPT_DIR/venv/bin/python" -m pip install --disable-pip-version-check -r "$WAYDROID_SCRIPT_DIR/requirements.txt"
     # Workaround for the pinned upstream commit's container stop behavior on Arch.
     if [[ "$HOST_FAMILY" == arch ]]; then
-        "$PYTHON_BIN" - "$WAYDROID_SCRIPT_DIR/tools/container.py" <<'PY'
+        if ! "$PYTHON_BIN" - "$WAYDROID_SCRIPT_DIR/tools/container.py" <<'PY'
 from pathlib import Path
 import sys
 path = Path(sys.argv[1])
 source = path.read_text()
 old = 'run(["waydroid", "container", "stop"])'
 new = 'run(["systemctl", "stop", "waydroid-container.service"])'
-if old in source:
+if source.count(old) == 1 and new not in source:
     path.write_text(source.replace(old, new))
+elif source.count(new) == 1 and old not in source:
+    pass
+else:
+    raise SystemExit("container.py patch target was missing or ambiguous; refusing to modify it")
+verified = path.read_text()
+if verified.count(new) != 1 or old in verified:
+    raise SystemExit("container.py patch verification failed")
 PY
+        then
+            die 'waydroid_scriptのcontainer.pyを安全にパッチできませんでした。'
+        fi
+        ok 'Arch向けcontainer.pyパッチを確認しました。'
     fi
 }
 

@@ -5,10 +5,11 @@ x86_64 Linux PCで「アイドルマスター ミリオンライブ！ シアタ
 ## 対応環境
 
 - x86_64、AMD Radeon（`amdgpu`）
-- CachyOS / Fedora KDE Plasma
+- CachyOS / Arch Linux
+- dnf版Fedora（KDE Plasmaを含む）
 - Wayland
 
-Ryzen 7 9700X + RX 6600XT、AMD BC250にて動作確認済。
+動作確認済み環境はCachyOS + KDE Plasmaのみです。Ryzen 7 9700X + Radeon RX 6600 XTおよびAMD BC250で確認しています。Arch LinuxとFedoraは対応対象ですが、実機での導入検証は未実施です。Ubuntuは今後対応予定です。
 
 ## インストール方法
 
@@ -24,7 +25,9 @@ CachyOSにWaydroidパッケージが既に入っていても、そのまま実�
 
 ## 実行内容
 
-Android 11 + Google Play、Houdini（`waydroid_script`経由）、同梱の`test_libnb`を導入し、Waydroidのネットワーク設定をします。Houdiniは実行時に取得します。ミリシタAPKは要求・配布しません。
+Android 11 + Google Play、Houdini（`waydroid_script`経由）、同梱のpatched `test_libnb`を導入し、Waydroidのネットワーク設定をします。ミリシタAPKは同梱・要求・取得・インストールしません。セットアップ後、ユーザー自身がGoogle Playから導入してください。
+
+Houdiniはセットアップ時にupstreamの[casualsnek/waydroid_script](https://github.com/casualsnek/waydroid_script)から固定revision `48dbfaf34a6ddbe78688c530f9ba1c26522aafb2`をdetached checkoutして導入します。MWIはHoudini binariesを再配布しません。
 
 ## インストール後
 
