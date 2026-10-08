@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-# MWI v0.1.0: fresh-install bootstrap for x86_64 AMD Radeon Linux desktops.
+# MWI v0.1.2: bootstrap for x86_64 AMD Radeon Linux desktops.
 # Houdini is obtained by casualsnek/waydroid_script at setup time. It is not
 # bundled or redistributed by this repository.
 
@@ -23,6 +23,7 @@ readonly WORK_ROOT="${XDG_STATE_HOME:-$HOME/.local/state}/mwi"
 readonly CACHE_DIR="$WORK_ROOT/cache"
 readonly WAYDROID_SCRIPT_DIR="$WORK_ROOT/waydroid_script"
 readonly IMAGE_DIR='/etc/waydroid-extra/images'
+readonly RESET_WAYDROID="${RESET_WAYDROID:-0}"
 HOST_FAMILY=''
 HOST_CODENAME=''
 PYTHON_BIN=''
@@ -76,10 +77,14 @@ preflight() {
     [[ -f "$LIBNB32" && -f "$LIBNB64" ]] || die '同梱payloadが見つかりません。'
     [[ "$(sha256sum "$LIBNB32" | awk '{print $1}')" == "$LIBNB32_SHA" ]] || die '32-bit libnbのSHA-256が一致しません。'
     [[ "$(sha256sum "$LIBNB64" | awk '{print $1}')" == "$LIBNB64_SHA" ]] || die '64-bit libnbのSHA-256が一致しません。'
-    if [[ -e /var/lib/waydroid/waydroid.cfg || -d "$HOME/.local/share/waydroid" ]]; then
-        die 'Waydroidの既存設定またはユーザーデータを検出しました。パッケージが導入済みなだけなら実行できます。既存データ保護のため、初期化済み環境には上書きしません。'
-    fi
     sudo -v
+    if [[ -e /var/lib/waydroid/waydroid.cfg || -d "$HOME/.local/share/waydroid" ]]; then
+        if [[ "$RESET_WAYDROID" == 1 ]]; then
+            reset_existing_waydroid
+        else
+            die 'Waydroidの既存設定またはユーザーデータを検出しました。クリーン再構築する場合は RESET_WAYDROID=1 ./install.sh を実行してください。'
+        fi
+    fi
     ok "ホストを確認しました: ${PRETTY_NAME:-${ID:-unknown}} ($HOST_FAMILY)"
     [[ "${XDG_SESSION_TYPE:-}" == wayland ]] || warn 'Waylandデスクトップセッションを推奨します。'
 }
@@ -89,7 +94,7 @@ install_packages() {
     case "$HOST_FAMILY" in
         arch)
             sudo pacman -Syu --needed --noconfirm \
-                waydroid mesa vulkan-radeon linux-firmware-amdgpu amd-ucode \
+                waydroid mesa vulkan-radeon linux-firmware-amdgpu \
                 curl git unzip lzip python pipewire pipewire-pulse wireplumber
             PYTHON_BIN="$(command -v python3 || command -v python)"
             ;;
@@ -97,7 +102,7 @@ install_packages() {
             sudo dnf install -y \
                 waydroid waydroid-selinux \
                 mesa-dri-drivers mesa-vulkan-drivers \
-                amd-gpu-firmware amd-ucode-firmware \
+                amd-gpu-firmware \
                 curl git unzip lzip python3 python3-pip \
                 pipewire pipewire-pulseaudio wireplumber
             PYTHON_BIN="$(command -v python3)"
@@ -141,6 +146,26 @@ stop_waydroid() {
     waydroid session stop >/dev/null 2>&1 || true
     sudo systemctl stop waydroid-container.service >/dev/null 2>&1 || true
     sleep 1
+}
+
+reset_existing_waydroid() {
+    msg 'Resetting existing Waydroid environment'
+    stop_waydroid
+    local backup_dir="$WORK_ROOT/backups/$(date +%Y%m%d-%H%M%S)"
+    mkdir -p "$backup_dir"
+
+    if [[ -d /var/lib/waydroid/data ]]; then
+        warn "既存Android userdataを $backup_dir/waydroid-data.tar.gz に退避します。"
+        sudo tar -C /var/lib/waydroid -cf - data | gzip >"$backup_dir/waydroid-data.tar.gz"
+    fi
+    if [[ -d "$HOME/.local/share/waydroid" ]]; then
+        tar -C "$HOME/.local/share" -czf "$backup_dir/user-waydroid.tar.gz" waydroid
+    fi
+
+    sudo rm -rf /var/lib/waydroid
+    rm -rf "$HOME/.local/share/waydroid"
+    sudo rm -rf "$IMAGE_DIR"
+    ok '既存Waydroid環境を退避して削除しました。'
 }
 
 start_waydroid() {
@@ -193,30 +218,7 @@ prepare_waydroid_script() {
     ok "waydroid_script commitを確認しました: $actual_commit"
     "$PYTHON_BIN" -m venv "$WAYDROID_SCRIPT_DIR/venv"
     "$WAYDROID_SCRIPT_DIR/venv/bin/python" -m pip install --disable-pip-version-check -r "$WAYDROID_SCRIPT_DIR/requirements.txt"
-    # Workaround for the pinned upstream commit's container stop behavior on Arch.
-    if [[ "$HOST_FAMILY" == arch ]]; then
-        if ! "$PYTHON_BIN" - "$WAYDROID_SCRIPT_DIR/tools/container.py" <<'PY'
-from pathlib import Path
-import sys
-path = Path(sys.argv[1])
-source = path.read_text()
-old = 'run(["waydroid", "container", "stop"])'
-new = 'run(["systemctl", "stop", "waydroid-container.service"])'
-if source.count(old) == 1 and new not in source:
-    path.write_text(source.replace(old, new))
-elif source.count(new) == 1 and old not in source:
-    pass
-else:
-    raise SystemExit("container.py patch target was missing or ambiguous; refusing to modify it")
-verified = path.read_text()
-if verified.count(new) != 1 or old in verified:
-    raise SystemExit("container.py patch verification failed")
-PY
-        then
-            die 'waydroid_scriptのcontainer.pyを安全にパッチできませんでした。'
-        fi
-        ok 'Arch向けcontainer.pyパッチを確認しました。'
-    fi
+    ok 'waydroid_scriptは固定commitを無改変で使用します。'
 }
 
 install_houdini() {
@@ -284,31 +286,127 @@ install_test_libnb() {
     sudo waydroid shell getprop ro.product.cpu.abilist | tr -d '\r' | grep -q arm64-v8a || die 'ARM64 ABIが公開されていません。'
 }
 
+wait_waydroid_ipv4() {
+    local attempt
+    for attempt in $(seq 1 20); do
+        if sudo waydroid shell ip -4 -o addr show dev eth0 scope global 2>/dev/null | tr -d '\r' | grep -q ' inet '; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+host_uplink() {
+    ip -4 route get 1.1.1.1 2>/dev/null | awk '
+        {
+            for (i = 1; i <= NF; i++) {
+                if ($i == "dev" && (i + 1) <= NF) {
+                    print $(i + 1)
+                    exit
+                }
+            }
+        }'
+}
+
+configure_host_firewall() {
+    local uplink
+    uplink="$(host_uplink || true)"
+
+    if command -v ufw >/dev/null 2>&1 && sudo ufw status 2>/dev/null | head -1 | grep -qi active; then
+        msg 'Configuring UFW for Waydroid'
+        sudo ufw allow in on waydroid0 >/dev/null || true
+        sudo ufw allow out on waydroid0 >/dev/null || true
+        if [[ -n "$uplink" ]]; then
+            sudo ufw route allow in on waydroid0 out on "$uplink" >/dev/null || true
+        else
+            warn 'ホストの外向きinterfaceを判定できなかったため、UFW forwarding ruleを追加できませんでした。'
+        fi
+        sudo ufw reload >/dev/null || true
+    fi
+
+    if command -v firewall-cmd >/dev/null 2>&1 && sudo firewall-cmd --state >/dev/null 2>&1; then
+        msg 'Configuring firewalld for Waydroid'
+        sudo firewall-cmd --permanent --zone=trusted --add-interface=waydroid0 >/dev/null || true
+        sudo firewall-cmd --reload >/dev/null || true
+    fi
+}
+
+repair_waydroid_network_once() {
+    local host_cidr gateway prefix android_mac lease_ip
+    host_cidr="$(ip -4 -o addr show dev waydroid0 2>/dev/null | awk 'NR==1 {print $4}')"
+    [[ -n "$host_cidr" ]] || return 1
+    gateway="${host_cidr%/*}"
+    prefix="${host_cidr#*/}"
+
+    if ! sudo waydroid shell ip -4 -o addr show dev eth0 scope global 2>/dev/null | tr -d '\r' | grep -q ' inet '; then
+        android_mac="$(sudo waydroid shell cat /sys/class/net/eth0/address 2>/dev/null | tr -d '\r' | tr '[:upper:]' '[:lower:]')"
+        lease_ip="$(sudo awk -v mac="$android_mac" 'tolower($2)==mac {ip=$3} END {print ip}' /var/lib/misc/dnsmasq.waydroid0.leases 2>/dev/null || true)"
+        if [[ -n "$lease_ip" ]]; then
+            warn "DHCP lease ($lease_ip) は存在しますがeth0へIPv4が反映されていません。leaseを補完します。"
+            printf 'ip link set eth0 up\nip addr replace %s/%s dev eth0\n' "$lease_ip" "$prefix" | sudo waydroid shell >/dev/null
+        fi
+    fi
+
+    sudo waydroid shell ip -4 -o addr show dev eth0 scope global 2>/dev/null | tr -d '\r' | grep -q ' inet ' || return 1
+
+    if ! sudo waydroid shell ip -4 route 2>/dev/null | tr -d '\r' | grep -q '^default '; then
+        warn "Waydroidのdefault routeがありません。gateway $gateway を補完します。"
+        printf 'ip route replace default via %s dev eth0\n' "$gateway" | sudo waydroid shell >/dev/null
+    fi
+}
+
 verify_network() {
-    sudo waydroid shell ip route 2>/dev/null | tr -d '\r' | grep -q '^default ' || return 1
+    sudo waydroid shell ip -4 -o addr show dev eth0 scope global 2>/dev/null | tr -d '\r' | grep -q ' inet ' || return 1
+    sudo waydroid shell ip -4 route 2>/dev/null | tr -d '\r' | grep -q '^default ' || return 1
     sudo waydroid shell ping -c 1 -W 3 1.1.1.1 >/dev/null 2>&1 || return 1
-    sudo waydroid shell ping -c 1 -W 3 play.googleapis.com >/dev/null 2>&1 || return 1
+    sudo waydroid shell ping -c 1 -W 3 google.com >/dev/null 2>&1 || return 1
+}
+
+stabilize_waydroid_network() {
+    local attempt good=0
+    for attempt in $(seq 1 12); do
+        repair_waydroid_network_once || true
+        if verify_network; then
+            good=$((good + 1))
+            if (( good >= 2 )); then
+                return 0
+            fi
+        else
+            good=0
+        fi
+        sleep 3
+    done
+    return 1
 }
 
 configure_network() {
     msg 'Configuring Waydroid network access'
-    echo 'net.ipv4.ip_forward=1' | sudo tee /etc/sysctl.d/99-waydroid-network.conf >/dev/null
+    printf '%s\n' \
+        'net.ipv4.ip_forward=1' \
+        'net.ipv6.conf.all.disable_ipv6=0' \
+        'net.ipv6.conf.default.disable_ipv6=0' \
+        | sudo tee /etc/sysctl.d/99-waydroid-network.conf >/dev/null
     sudo sysctl -p /etc/sysctl.d/99-waydroid-network.conf >/dev/null || true
-    if command -v ufw >/dev/null 2>&1 && sudo ufw status 2>/dev/null | head -1 | grep -qi active; then
-        sudo ufw allow in on waydroid0 to any port 67 proto udp >/dev/null || true
-        sudo ufw allow in on waydroid0 to any port 53 proto udp >/dev/null || true
-        sudo ufw allow in on waydroid0 to any port 53 proto tcp >/dev/null || true
-        sudo ufw route allow in on waydroid0 >/dev/null || true
-    fi
-    if command -v firewall-cmd >/dev/null 2>&1 && sudo firewall-cmd --state >/dev/null 2>&1; then
-        sudo firewall-cmd --permanent --zone=trusted --add-interface=waydroid0 >/dev/null || true
-        sudo firewall-cmd --reload >/dev/null || true
-    fi
+
+    configure_host_firewall
+
     stop_waydroid
     start_waydroid
     wait_android
-    verify_network || { stop_waydroid; start_waydroid; wait_android; verify_network; } || die 'Waydroid network verification failed.'
-    ok 'Waydroidの経路、IPv4疎通、DNSを確認しました。'
+    wait_waydroid_ipv4 || true
+
+    if ! stabilize_waydroid_network; then
+        warn 'Waydroid network初期化を再試行します。'
+        stop_waydroid
+        start_waydroid
+        wait_android
+        wait_waydroid_ipv4 || true
+        stabilize_waydroid_network || true
+    fi
+
+    verify_network || die 'Waydroid network verification failed (DHCP / eth0 / default route / Internet / DNS).'
+    ok 'WaydroidのDHCP、IPv4、default route、Internet、DNSを確認しました。'
 }
 
 launch_play_store() {

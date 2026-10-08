@@ -22,13 +22,13 @@ chmod +x install.sh
 ./install.sh
 ```
 
-CachyOSにWaydroidパッケージが既に入っていても、そのまま実行できます。手動での再インストールは不要です。installerの`pacman -Syu --needed`はシステム全体を更新し、更新不要のパッケージは再インストールしません。初期化済みのWaydroid設定またはユーザーデータがある場合は、既存データ保護のため停止します。
+CachyOSにWaydroidパッケージが既に入っていても、そのまま実行できます。手動での再インストールは不要です。installerの`pacman -Syu --needed`はシステム全体を更新し、更新不要のパッケージは再インストールしません。初期化済みのWaydroid設定またはユーザーデータがある場合は、既存データ保護のため停止します。完全に作り直す場合は `RESET_WAYDROID=1 ./install.sh` を実行してください（既存データは `~/.local/state/mwi/backups/` へ退避します）。
 
 UbuntuではWaylandセッションにログインして実行してください。Ubuntuの`universe`と[公式Waydroidリポジトリ](https://docs.waydro.id/usage/install-on-desktops#debian-ubuntu-and-derivatives)を有効にし、`apt-get`で必要なパッケージを導入します。Ubuntu 22.04、26.04やUbuntu派生ディストリビューションは今回の実験対応に含みません。
 
 ## 実行内容
 
-Android 11 + Google Play、Houdini（`waydroid_script`経由）、同梱のpatched `test_libnb`を導入し、Waydroidのネットワーク設定をします。ミリシタAPKは同梱・要求・取得・インストールしません。セットアップ後、ユーザー自身がGoogle Playから導入してください。
+Android 11 + Google Play、Houdini（`waydroid_script`経由）、同梱のpatched `test_libnb`を導入し、Waydroidのネットワーク設定をします。UFW/firewalldが有効な場合は`waydroid0`用ルールを設定し、DHCP・default route・Internet・DNSを確認します。ミリシタAPKは同梱・要求・取得・インストールしません。セットアップ後、ユーザー自身がGoogle Playから導入してください。
 
 Houdiniはセットアップ時にupstreamの[casualsnek/waydroid_script](https://github.com/casualsnek/waydroid_script)から固定revision `48dbfaf34a6ddbe78688c530f9ba1c26522aafb2`をdetached checkoutして導入します。MWIはHoudini binariesを再配布しません。
 
