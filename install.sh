@@ -77,6 +77,7 @@ preflight() {
     [[ -f "$LIBNB32" && -f "$LIBNB64" ]] || die '同梱payloadが見つかりません。'
     [[ "$(sha256sum "$LIBNB32" | awk '{print $1}')" == "$LIBNB32_SHA" ]] || die '32-bit libnbのSHA-256が一致しません。'
     [[ "$(sha256sum "$LIBNB64" | awk '{print $1}')" == "$LIBNB64_SHA" ]] || die '64-bit libnbのSHA-256が一致しません。'
+    sudo -v
     if [[ -e /var/lib/waydroid/waydroid.cfg || -d "$HOME/.local/share/waydroid" ]]; then
         if [[ "$RESET_WAYDROID" == 1 ]]; then
             reset_existing_waydroid
@@ -84,7 +85,6 @@ preflight() {
             die 'Waydroidの既存設定またはユーザーデータを検出しました。クリーン再構築する場合は RESET_WAYDROID=1 ./install.sh を実行してください。'
         fi
     fi
-    sudo -v
     ok "ホストを確認しました: ${PRETTY_NAME:-${ID:-unknown}} ($HOST_FAMILY)"
     [[ "${XDG_SESSION_TYPE:-}" == wayland ]] || warn 'Waylandデスクトップセッションを推奨します。'
 }
@@ -288,7 +288,7 @@ install_test_libnb() {
 
 wait_waydroid_ipv4() {
     local attempt
-    for attempt in $(seq 1 30); do
+    for attempt in $(seq 1 20); do
         if sudo waydroid shell ip -4 -o addr show dev eth0 scope global 2>/dev/null | tr -d '\r' | grep -q ' inet '; then
             return 0
         fi
@@ -297,23 +297,58 @@ wait_waydroid_ipv4() {
     return 1
 }
 
-repair_waydroid_network() {
+host_uplink() {
+    ip -4 route get 1.1.1.1 2>/dev/null | awk '
+        {
+            for (i = 1; i <= NF; i++) {
+                if ($i == "dev" && (i + 1) <= NF) {
+                    print $(i + 1)
+                    exit
+                }
+            }
+        }'
+}
+
+configure_host_firewall() {
+    local uplink
+    uplink="$(host_uplink || true)"
+
+    if command -v ufw >/dev/null 2>&1 && sudo ufw status 2>/dev/null | head -1 | grep -qi active; then
+        msg 'Configuring UFW for Waydroid'
+        sudo ufw allow in on waydroid0 >/dev/null || true
+        sudo ufw allow out on waydroid0 >/dev/null || true
+        if [[ -n "$uplink" ]]; then
+            sudo ufw route allow in on waydroid0 out on "$uplink" >/dev/null || true
+        else
+            warn 'ホストの外向きinterfaceを判定できなかったため、UFW forwarding ruleを追加できませんでした。'
+        fi
+        sudo ufw reload >/dev/null || true
+    fi
+
+    if command -v firewall-cmd >/dev/null 2>&1 && sudo firewall-cmd --state >/dev/null 2>&1; then
+        msg 'Configuring firewalld for Waydroid'
+        sudo firewall-cmd --permanent --zone=trusted --add-interface=waydroid0 >/dev/null || true
+        sudo firewall-cmd --reload >/dev/null || true
+    fi
+}
+
+repair_waydroid_network_once() {
     local host_cidr gateway prefix android_mac lease_ip
     host_cidr="$(ip -4 -o addr show dev waydroid0 2>/dev/null | awk 'NR==1 {print $4}')"
     [[ -n "$host_cidr" ]] || return 1
     gateway="${host_cidr%/*}"
     prefix="${host_cidr#*/}"
 
-    if ! wait_waydroid_ipv4; then
+    if ! sudo waydroid shell ip -4 -o addr show dev eth0 scope global 2>/dev/null | tr -d '\r' | grep -q ' inet '; then
         android_mac="$(sudo waydroid shell cat /sys/class/net/eth0/address 2>/dev/null | tr -d '\r' | tr '[:upper:]' '[:lower:]')"
         lease_ip="$(sudo awk -v mac="$android_mac" 'tolower($2)==mac {ip=$3} END {print ip}' /var/lib/misc/dnsmasq.waydroid0.leases 2>/dev/null || true)"
         if [[ -n "$lease_ip" ]]; then
-            warn "DHCP lease ($lease_ip) は存在しますがeth0へIPv4が反映されていません。leaseを一時反映します。"
+            warn "DHCP lease ($lease_ip) は存在しますがeth0へIPv4が反映されていません。leaseを補完します。"
             printf 'ip link set eth0 up\nip addr replace %s/%s dev eth0\n' "$lease_ip" "$prefix" | sudo waydroid shell >/dev/null
         fi
     fi
 
-    wait_waydroid_ipv4 || return 1
+    sudo waydroid shell ip -4 -o addr show dev eth0 scope global 2>/dev/null | tr -d '\r' | grep -q ' inet ' || return 1
 
     if ! sudo waydroid shell ip -4 route 2>/dev/null | tr -d '\r' | grep -q '^default '; then
         warn "Waydroidのdefault routeがありません。gateway $gateway を補完します。"
@@ -328,6 +363,23 @@ verify_network() {
     sudo waydroid shell ping -c 1 -W 3 google.com >/dev/null 2>&1 || return 1
 }
 
+stabilize_waydroid_network() {
+    local attempt good=0
+    for attempt in $(seq 1 12); do
+        repair_waydroid_network_once || true
+        if verify_network; then
+            good=$((good + 1))
+            if (( good >= 2 )); then
+                return 0
+            fi
+        else
+            good=0
+        fi
+        sleep 3
+    done
+    return 1
+}
+
 configure_network() {
     msg 'Configuring Waydroid network access'
     printf '%s\n' \
@@ -337,31 +389,24 @@ configure_network() {
         | sudo tee /etc/sysctl.d/99-waydroid-network.conf >/dev/null
     sudo sysctl -p /etc/sysctl.d/99-waydroid-network.conf >/dev/null || true
 
-    if command -v ufw >/dev/null 2>&1 && sudo ufw status 2>/dev/null | head -1 | grep -qi active; then
-        sudo ufw allow in on waydroid0 to any port 67 proto udp >/dev/null || true
-        sudo ufw allow in on waydroid0 to any port 53 proto udp >/dev/null || true
-        sudo ufw allow in on waydroid0 to any port 53 proto tcp >/dev/null || true
-        sudo ufw route allow in on waydroid0 >/dev/null || true
-    fi
-    if command -v firewall-cmd >/dev/null 2>&1 && sudo firewall-cmd --state >/dev/null 2>&1; then
-        sudo firewall-cmd --permanent --zone=trusted --add-interface=waydroid0 >/dev/null || true
-        sudo firewall-cmd --reload >/dev/null || true
-    fi
+    configure_host_firewall
 
     stop_waydroid
     start_waydroid
     wait_android
+    wait_waydroid_ipv4 || true
 
-    if ! repair_waydroid_network || ! verify_network; then
+    if ! stabilize_waydroid_network; then
         warn 'Waydroid network初期化を再試行します。'
         stop_waydroid
         start_waydroid
         wait_android
-        repair_waydroid_network || true
+        wait_waydroid_ipv4 || true
+        stabilize_waydroid_network || true
     fi
 
-    verify_network || die 'Waydroid network verification failed (eth0 / default route / Internet / DNS).'
-    ok 'WaydroidのIPv4、default route、Internet、DNSを確認しました。'
+    verify_network || die 'Waydroid network verification failed (DHCP / eth0 / default route / Internet / DNS).'
+    ok 'WaydroidのDHCP、IPv4、default route、Internet、DNSを確認しました。'
 }
 
 launch_play_store() {
