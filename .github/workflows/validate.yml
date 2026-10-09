@@ -1,0 +1,15 @@
+name: Validate installer
+on: [push, pull_request]
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bash syntax
+        run: bash -n install.sh && bash -n lib/lifecycle.sh
+      - name: Python and UFW branch tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Build and check ZIP
+        run: |
+          python3 tools/build_zip.py
+          python3 -c "import zipfile; z=zipfile.ZipFile('dist/MWI_0.2.5.zip'); assert z.testzip() is None; assert all(n.startswith('MWI_0.2.5/') for n in z.namelist())"

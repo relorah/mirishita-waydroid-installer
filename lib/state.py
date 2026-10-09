@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read state and change only Waydroid configuration/overlays; never game data.
+"""Read and manage Waydroid state, including explicit reset/reinstall modes.
 
 All destructive paths are fixed here. Backups are root-owned, complete snapshots
 of the overlay/configuration, not of Android userdata or base image contents.
@@ -365,6 +365,41 @@ def reset(user_data, uid, report):
         print(f'退避: {item["from"]} -> {item["to"]}')
 
 
+def reinstall(user_data, uid, report, work_root):
+    import pwd
+    home = Path(pwd.getpwuid(uid).pw_dir).absolute()
+    user_data = Path(user_data).absolute()
+    if uid <= 0 or home == Path('/') or home not in user_data.parents or user_data.name != 'waydroid':
+        raise ValueError('現在ユーザーのホーム内にあるWaydroidデータだけ削除できます。')
+    targets = (WD, user_data, IMAGE)
+    mount_data = subprocess.run(['findmnt', '--json', '-o', 'TARGET'], capture_output=True,
+                                text=True, check=True).stdout
+    def mount_targets(entries):
+        for entry in entries:
+            yield entry['target']
+            yield from mount_targets(entry.get('children', []))
+    mounts = list(mount_targets(json.loads(mount_data)['filesystems']))
+    protected = (Path(report).absolute(), Path(work_root).absolute())
+    # Validate every target before deleting anything.
+    for target in targets:
+        no_symlink_parents(target, include_leaf=True)
+        if any(target == path or target in path.parents or path in target.parents
+               for path in protected):
+            raise ValueError(f'ログ・キャッシュと削除対象が重複しています: {target}')
+        if any(Path(m) == target or target in Path(m).parents for m in mounts):
+            raise ValueError(f'マウントが残っています。削除中止: {target}')
+        if any(target != other and (target in other.parents or other in target.parents)
+               for other in targets):
+            raise ValueError(f'削除対象が重複しています: {target}')
+    changes = [{'path': str(target), 'deleted': False} for target in targets if target.exists()]
+    atomic_bytes(report, json.dumps(changes, indent=2).encode(), 0o600)
+    for item in changes:
+        remove_path(Path(item['path']))
+        item['deleted'] = True
+        atomic_bytes(report, json.dumps(changes, indent=2).encode(), 0o600)
+        print(f'削除: {item["path"]}')
+
+
 def main():
     op, *args = sys.argv[1:]
     if op == 'inspect': inspect()
@@ -384,6 +419,7 @@ def main():
     elif op == 'verify-houdini': verify_houdini(args[0])
     elif op == 'verify-runtime': verify_runtime()
     elif op == 'reset': reset(args[0], int(args[1]), args[2])
+    elif op == 'reinstall': reinstall(args[0], int(args[1]), args[2], args[3])
     else: raise ValueError(f'不明な操作: {op}')
 
 

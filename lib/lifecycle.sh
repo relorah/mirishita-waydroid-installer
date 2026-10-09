@@ -4,15 +4,17 @@ MODE=auto
 STAGE=preflight
 BACKUP=''
 LOG_DIR=''
+UFW_DECISION=''
+UFW_DECLINED=0
 USER_DATA="${XDG_DATA_HOME:-$HOME/.local/share}/waydroid"
 PINNED_UPSTREAM="$WORK_ROOT/waydroid_script-$WAYDROID_SCRIPT_COMMIT"
 
 confirm() {
     local answer
     [[ -t 0 ]] || die '変更の確認には対話端末が必要です。--diagnose は非対話でも利用できます。'
-    printf '%s [yes/No]: ' "$1"
+    printf '%s [y/N]: ' "$1"
     IFS= read -r answer || return 1
-    [[ "$answer" == yes ]]
+    [[ "$answer" == y || "$answer" == Y ]]
 }
 collect_logs() {
     [[ -n "$LOG_DIR" ]] || return 0
@@ -26,7 +28,7 @@ collect_logs() {
     timeout 10 sudo -n sysctl net.ipv4.ip_forward >"$LOG_DIR/host-ip-forward.txt" 2>&1 || true
     timeout 10 sudo -n nft list ruleset >"$LOG_DIR/host-nftables.txt" 2>&1 || true
     timeout 10 sudo -n iptables-save >"$LOG_DIR/host-iptables.txt" 2>&1 || true
-    timeout 10 sudo -n waydroid shell -- sh -c 'ip -4 addr show dev eth0; ip -4 route; getprop net.dns1; getprop net.dns2; dumpsys connectivity' >"$LOG_DIR/android-network.txt" 2>&1 || true
+    printf '%s\n' 'ip -4 addr show dev eth0; ip -4 route show table all; ip -4 rule; getprop net.dns1; getprop net.dns2; dumpsys connectivity' | timeout 10 sudo -n waydroid shell >"$LOG_DIR/android-network.txt" 2>&1 || true
 }
 on_exit() {
     local rc=$?
@@ -143,7 +145,57 @@ stop_waydroid() {
     done
     die '停止・マウント解除を確認できません。ファイル変更を中止しました。'
 }
+ufw_declined_hint() {
+    [[ "$UFW_DECLINED" == 1 ]] || return 0
+    warn 'UFW例外を追加しなかったためDHCP/DNSが遮断されている可能性があります。waydroid0のDHCP UDP/67、192.168.240.1へのDNS UDP/TCP 53、192.168.240.0/24からuplinkへの転送許可を確認してください。network-ufw.txtとnetwork-dhcp-leases.txtも参照してください。'
+}
+network_die() { ufw_declined_hint; die "$@"; }
+prepare_ufw() {
+    command -v ufw >/dev/null || return 0
+    local status egress UFW_RULES rule
+    local -a missing=() args=()
+    status="$(sudo env LC_ALL=C ufw status)" || die 'UFWの状態を取得できません。'
+    grep -q '^Status: active' <<<"$status" || return 0
+    [[ "$UFW_DECISION" != declined ]] || return 0
+    egress="$(ip -4 route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if($i=="dev") {print $(i+1); exit}}')"
+    if [[ ! "$egress" =~ ^[a-zA-Z0-9_.:-]+$ || "$egress" == waydroid0 || "$egress" == lo ]]; then
+        warn 'UFW転送先uplinkを特定できません。既存ルールは変更せず続行します。'
+        return 0
+    fi
+    UFW_RULES="$(sudo env LC_ALL=C ufw show added)" || die 'UFWの既存ルールを取得できません。'
+    local missing_text
+    missing_text="$(printf '%s' "$UFW_RULES" | "$PYTHON_BIN" "$SCRIPT_DIR/lib/ufw_rules.py" "$egress")" || die 'UFWの既存ルールを解析できません。'
+    while IFS= read -r rule; do
+        [[ -z "$rule" ]] || missing+=("$rule")
+    done <<<"$missing_text"
+    (( ${#missing[@]} )) || return 0
+    if [[ -z "$UFW_DECISION" ]]; then
+        msg "UFW: Waydroid DHCP UDP/67、DNS UDP/TCP 53、waydroid0 -> $egressの転送例外が不足しています"
+        if [[ -t 0 ]] && confirm 'Waydroid用のUFW例外を追加しますか'; then
+            UFW_DECISION=accepted
+        else
+            UFW_DECISION=declined
+            UFW_DECLINED=1
+            msg 'UFW例外を追加せず続行します。'
+            return 0
+        fi
+    fi
+    sudo env LC_ALL=C ufw status verbose >>"$LOG_DIR/network-ufw-before.txt" 2>&1
+    # Add only missing rules. Never reset/enable/reload or change default policy.
+    for rule in "${missing[@]}"; do
+        IFS=' ' read -r -a args <<<"$rule"
+        if [[ "${args[0]}" == route ]]; then
+            sudo env LC_ALL=C ufw route insert 1 "${args[@]:1}" comment 'MWI Waydroid forwarding' >>"$LOG_DIR/network-ufw-apply.txt" 2>&1 || die 'UFW転送許可に失敗しました。'
+        else
+            local label='MWI Waydroid DHCP'
+            [[ "$rule" != *'port 53 proto udp' ]] || label='MWI Waydroid DNS UDP'
+            [[ "$rule" != *'port 53 proto tcp' ]] || label='MWI Waydroid DNS TCP'
+            sudo env LC_ALL=C ufw insert 1 "${args[@]}" comment "$label" >>"$LOG_DIR/network-ufw-apply.txt" 2>&1 || die 'UFW DHCP/DNS許可に失敗しました。'
+        fi
+    done
+}
 start_waydroid() {
+    prepare_ufw
     prepare_firewalld
     sudo systemctl enable --now waydroid-container.service
     (waydroid session start >>"$LOG_DIR/session.txt" 2>&1 9>&- &)
@@ -158,10 +210,10 @@ wait_android() {
     die 'Androidが起動しません。サービスとAndroidのログを保存します。'
 }
 android_route() {
-    timeout 8 sudo waydroid shell -- ip -4 route 2>/dev/null | tr -d '\r' || true
+    printf '%s\n' 'ip -4 route show table all' | timeout 8 sudo waydroid shell 2>/dev/null | tr -d '\r' || true
 }
 android_ipv4() {
-    timeout 8 sudo waydroid shell -- ip -4 -o addr show dev eth0 2>/dev/null | tr -d '\r' || true
+    printf '%s\n' 'ip -4 -o addr show dev eth0' | timeout 8 sudo waydroid shell 2>/dev/null | tr -d '\r' || true
 }
 android_has_ipv4() {
     grep -qE 'inet 192\.168\.240\.([2-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-4])/24([[:space:]]|$)' <<<"$1"
@@ -176,6 +228,11 @@ wait_network_ipv4() {
     return 1
 }
 network_snapshot() {
+    sudo ss -lntup >"$LOG_DIR/network-dnsmasq-listeners.txt" 2>&1 || true
+    sudo pgrep -a dnsmasq >"$LOG_DIR/network-dnsmasq-processes.txt" 2>&1 || true
+    bridge link show master waydroid0 >"$LOG_DIR/network-bridge-ports.txt" 2>&1 || true
+    sudo journalctl -u waydroid-container -b -n 120 --no-pager >"$LOG_DIR/network-container-journal.txt" 2>&1 || true
+    sudo cat /var/lib/misc/dnsmasq.waydroid0.leases >"$LOG_DIR/network-dhcp-leases.txt" 2>&1 || true
     ip -details addr show waydroid0 >"$LOG_DIR/network-host-interface.txt" 2>&1 || true
     ip route get 1.1.1.1 >"$LOG_DIR/network-host-egress.txt" 2>&1 || true
     sudo sysctl net.ipv4.ip_forward >"$LOG_DIR/network-ip-forward.txt" 2>&1 || true
@@ -194,16 +251,21 @@ network_snapshot() {
     fi
     if command -v ufw >/dev/null; then sudo ufw status verbose >"$LOG_DIR/network-ufw.txt" 2>&1 || true; fi
     if command -v firewall-cmd >/dev/null; then sudo firewall-cmd --get-active-zones >"$LOG_DIR/network-firewalld.txt" 2>&1 || true; fi
-    timeout 10 sudo waydroid shell -- sh -c 'ip -4 addr show dev eth0; ip -4 route; printf "net.dns1="; getprop net.dns1; printf "net.dns2="; getprop net.dns2; dumpsys connectivity' >"$LOG_DIR/network-android.txt" 2>&1 || true
+    printf '%s\n' 'ip -4 addr show dev eth0; ip -4 route show table all; ip -4 rule; printf "net.dns1="; getprop net.dns1; printf "net.dns2="; getprop net.dns2; dumpsys connectivity' | timeout 10 sudo waydroid shell >"$LOG_DIR/network-android.txt" 2>&1 || true
 }
 network_restart() {
     msg 'Waydroidのネットワークを再生成します'
+    network_snapshot
+    mkdir -p "$LOG_DIR/network-before-restart"
+    cp -- "$LOG_DIR"/network-*.txt "$LOG_DIR/network-before-restart/" 2>/dev/null || true
     stop_waydroid
+    prepare_ufw
     prepare_firewalld
     sudo systemctl start waydroid-container.service
     (waydroid session start >>"$LOG_DIR/session-network-restart.txt" 2>&1 9>&- &)
     wait_android
-    wait_network_ipv4 || die '再起動後もDHCPのIPv4を取得できません。dnsmasqの状態を確認してください。'
+    wait_network_ipv4 || warn '再起動後もDHCPのIPv4を取得できません。診断を保存して最終判定します。'
+    network_snapshot
 }
 dns_resolved() {
     # ping resolves through Android's resolver before sending ICMP. A resolved
@@ -215,7 +277,7 @@ https_responded() {
     grep -qE '^HTTP/[0-9.]+ [1-5][0-9][0-9]([[:space:]]|$)' "$1"
 }
 android_https_test() {
-    timeout 15 sudo waydroid shell -- sh -c 'if command -v curl >/dev/null 2>&1; then curl --noproxy "*" -I --connect-timeout 5 --max-time 10 https://play.googleapis.com/; else toybox wget -d -O /dev/null https://play.googleapis.com/; fi' >"$1" 2>&1 || true
+    printf '%s\n' 'if command -v curl >/dev/null 2>&1; then curl --noproxy "*" -I --connect-timeout 5 --max-time 10 https://play.googleapis.com/; else toybox wget -d -O /dev/null https://play.googleapis.com/; fi' | timeout 15 sudo waydroid shell >"$1" 2>&1 || true
     https_responded "$1" && return 0
     # A11 images may have no TLS-capable command. Use host curl inside the
     # container's network namespace, with an address resolved by Android.
@@ -234,7 +296,7 @@ android_https_test() {
     return 1
 }
 android_dns_test() {
-    timeout 8 sudo waydroid shell -- ping -c 1 -W 1 play.googleapis.com >"$LOG_DIR/network-dns-test.txt" 2>&1 || true
+    printf '%s\n' 'ping -c 1 -W 1 play.googleapis.com' | timeout 8 sudo waydroid shell >"$LOG_DIR/network-dns-test.txt" 2>&1 || true
     dns_resolved "$LOG_DIR/network-dns-test.txt"
 }
 network_nat_present() {
@@ -244,23 +306,13 @@ network_nat_present() {
     # Arch can use Waydroid's native nft backend. Read its dedicated NAT chain.
     sudo nft list chain ip lxc postrouting 2>/dev/null | grep -qE 'ip saddr 192\.168\.240\.0/24 ip daddr != 192\.168\.240\.0/24.*masquerade'
 }
-android_default_route() {
-    local route
-    route="$(android_route)"
-    if ! grep -qE '^default( |$)' <<<"$route"; then
-        timeout 8 sudo waydroid shell -- ip -4 route add default via 192.168.240.1 dev eth0 || return 1
-        route="$(android_route)"
-    fi
-    # A different default can indicate a VPN/custom network. Do not overwrite it.
-    grep -qE '^default via 192\.168\.240\.1 dev eth0( |$)' <<<"$route"
-}
 network_check_and_repair() {
-    local n route addr egress nat_ok=0 network_restarted=0
+    local n addr nat_ok=0 network_restarted=0
     msg 'Waydroidネットワークの確認'
+    prepare_ufw
     network_snapshot
     for n in $(seq 1 20); do
         addr="$(android_ipv4)"
-        route="$(android_route)"
         android_has_ipv4 "$addr" && break
         sleep 1
     done
@@ -270,57 +322,47 @@ network_check_and_repair() {
         network_restarted=1
         network_snapshot
         addr="$(android_ipv4)"
-        route="$(android_route)"
     fi
-    android_has_ipv4 "$addr" || die 'Android eth0に192.168.240.0/24のIPv4がありません。DHCP/dnsmasq状態をnetwork-android.txtで確認してください。'
+    android_has_ipv4 "$addr" || network_die 'Android eth0に192.168.240.0/24のIPv4がありません。network-dhcp-leases.txt、network-dnsmasq-listeners.txt、network-bridge-ports.txt、network-android.txtを確認してください。'
     if network_nat_present; then nat_ok=1; fi
     if (( nat_ok == 0 && network_restarted == 0 )); then
         warn 'Waydroid MASQUERADE ruleを確認できません。標準container networkを再生成します。'
         network_restart
         network_restarted=1
         network_snapshot
-        route="$(android_route)"
         addr="$(android_ipv4)"
-        android_has_ipv4 "$addr" || die 'ネットワーク再生成後もAndroid eth0にIPv4がありません。'
+        android_has_ipv4 "$addr" || network_die 'ネットワーク再生成後もAndroid eth0にIPv4がありません。'
     fi
-    network_nat_present || die '再生成後もWaydroid NATを確認できません。network-nftables.txtとnetwork-iptables-rules.txtを確認してください。'
-    android_default_route || die '標準default routeを確認できません。既存の別gatewayは変更していません。'
+    network_nat_present || network_die '再生成後もWaydroid NATを確認できません。network-nftables.txtとnetwork-iptables-rules.txtを確認してください。'
     sudo sysctl -w net.ipv4.ip_forward=1 >/dev/null
-    [[ "$(sudo sysctl -n net.ipv4.ip_forward)" == 1 ]] || die 'ホストのIPv4 forwardingが有効になりません。'
+    [[ "$(sudo sysctl -n net.ipv4.ip_forward)" == 1 ]] || network_die 'ホストのIPv4 forwardingが有効になりません。'
     if ! android_dns_test && (( network_restarted == 0 )); then
         warn 'Android DNS解決ができません。DHCP/DNSを再生成するためsession/containerを一度再起動します。'
         network_restart
         network_restarted=1
         network_snapshot
-        route="$(android_route)"
         addr="$(android_ipv4)"
-        android_has_ipv4 "$addr" || die 'DNS再生成後もAndroid eth0にIPv4がありません。'
-        android_default_route || die 'DNS再生成後のdefault routeを確認できません。'
+        android_has_ipv4 "$addr" || network_die 'DNS再生成後もAndroid eth0にIPv4がありません。'
         sudo sysctl -w net.ipv4.ip_forward=1 >/dev/null
         android_dns_test || true
     fi
 
-    # The Waydroid network helper installs DHCP/DNS INPUT, FORWARD and NAT
-    # rules on each container start. Prefer a targeted UFW route rule only
-    # when UFW is active and the Android side cannot reach an external IP.
-    timeout 8 sudo waydroid shell -- ping -c 1 -W 3 1.1.1.1 >"$LOG_DIR/network-ip-test.txt" 2>&1 || true
+    printf '%s\n' 'ping -c 1 -W 3 192.168.240.1' | timeout 8 sudo waydroid shell >"$LOG_DIR/network-gateway-test.txt" 2>&1 || true
+    printf '%s\n' 'ping -c 1 -W 3 1.1.1.1' | timeout 8 sudo waydroid shell >"$LOG_DIR/network-ip-test.txt" 2>&1 || true
     android_https_test "$LOG_DIR/network-https-test.txt" || true
-    if dns_resolved "$LOG_DIR/network-dns-test.txt" && ! grep -qE 'bytes from|1 packets transmitted, 1 (packets )?received' "$LOG_DIR/network-ip-test.txt" && ! https_responded "$LOG_DIR/network-https-test.txt"; then
-        egress="$(awk '{for(i=1;i<=NF;i++) if($i=="dev") {print $(i+1); exit}}' "$LOG_DIR/network-host-egress.txt")"
-        if command -v ufw >/dev/null && sudo env LC_ALL=C ufw status 2>/dev/null | grep -q '^Status: active' && [[ -n "$egress" ]]; then
-            warn "UFW is active and external IPv4 failed; adding a scoped route exception waydroid0 -> $egress."
-            sudo ufw route allow in on waydroid0 out on "$egress" from 192.168.240.0/24 comment 'MWI Waydroid forwarding'
-            timeout 8 sudo waydroid shell -- ping -c 1 -W 3 1.1.1.1 >"$LOG_DIR/network-ip-test.txt" 2>&1 || true
-            android_https_test "$LOG_DIR/network-https-test.txt" || true
-        fi
-    fi
     network_snapshot
-    ip -4 -o addr show dev waydroid0 2>/dev/null | grep -q 'inet 192\.168\.240\.1/24' || die '最終確認でホストbridgeのIPv4が欠落しています。'
-    network_nat_present || die '最終確認でWaydroid NATが欠落しています。'
-    [[ "$(sudo sysctl -n net.ipv4.ip_forward)" == 1 ]] || die '最終確認でIPv4 forwardingが無効です。'
+    ip -4 -o addr show dev waydroid0 2>/dev/null | grep -q 'inet 192\.168\.240\.1/24' || network_die '最終確認でホストbridgeのIPv4が欠落しています。'
+    addr="$(android_ipv4)"
+    android_has_ipv4 "$addr" || network_die '最終確認でAndroid IPv4が欠落しています。'
+    local lease_ip
+    lease_ip="$(awk '{for(i=1;i<=NF;i++) if($i=="inet") {split($(i+1),a,"/"); print a[1]; exit}}' <<<"$addr")"
+    awk -v address="$lease_ip" '$3 == address {found=1} END {exit !found}' "$LOG_DIR/network-dhcp-leases.txt" || network_die 'Android IPv4に対応するDHCP leaseを確認できません。network-dhcp-leases.txtを確認してください。'
+    network_nat_present || network_die '最終確認でWaydroid NATが欠落しています。'
+    [[ "$(sudo sysctl -n net.ipv4.ip_forward)" == 1 ]] || network_die '最終確認でIPv4 forwardingが無効です。'
     if grep -qE 'bytes from|1 packets transmitted, 1 (packets )?received' "$LOG_DIR/network-ip-test.txt"; then
         ok 'Androidから外部IPv4へ到達できます。'
     else
+        ufw_declined_hint
         warn '外部IPv4への疎通を確認できません。iptables/nftablesの優先順位やFORWARD dropをログで確認してください。MWIは未知のnftables/firewalld rulesetを直接変更しません。'
     fi
     if dns_resolved "$LOG_DIR/network-dns-test.txt"; then
@@ -334,22 +376,22 @@ network_check_and_repair() {
         warn 'Google Play APIへのHTTPS応答を確認できません。network-https-test.txtを確認してください。'
     fi
     network_regression_summary
-    dns_resolved "$LOG_DIR/network-dns-test.txt" || die 'DNS疎通の検証に失敗しました。配置変更は完了していますが、導入成功とは判定しません。'
-    https_responded "$LOG_DIR/network-https-test.txt" || die 'HTTPS応答を検証できません。Android側のHTTPSツール未対応の場合もこの段階で停止します。配置変更とバックアップは保持されています。'
+    dns_resolved "$LOG_DIR/network-dns-test.txt" || network_die 'DNS疎通の検証に失敗しました。配置変更は完了していますが、導入成功とは判定しません。'
+    https_responded "$LOG_DIR/network-https-test.txt" || network_die 'HTTPS応答を検証できません。Android側のHTTPSツール未対応の場合もこの段階で停止します。配置変更とバックアップは保持されています。'
 
 }
 network_regression_summary() {
     [[ -f "$LOG_DIR/network-baseline-android.txt" ]] || return 0
     local before=good after=good
-    grep -qE 'default via 192\.168\.240\.1|default via' "$LOG_DIR/network-baseline-android.txt" || before=bad
+    grep -qE 'inet 192\.168\.240\.' "$LOG_DIR/network-baseline-android.txt" || before=bad
     dns_resolved "$LOG_DIR/network-baseline-dns-test.txt" || before=bad
     https_responded "$LOG_DIR/network-baseline-https-test.txt" || before=bad
-    grep -qE 'default via 192\.168\.240\.1|default via' "$LOG_DIR/network-android.txt" || after=bad
+    grep -qE 'inet 192\.168\.240\.' "$LOG_DIR/network-android.txt" || after=bad
     dns_resolved "$LOG_DIR/network-dns-test.txt" || after=bad
     https_responded "$LOG_DIR/network-https-test.txt" || after=bad
     case "$before:$after" in
         good:good) printf '初回起動とMWI適用後のネットワーク: 両方OK（今回の処理では不通を再現せず）\n' | tee "$LOG_DIR/network-comparison.txt" ;;
-        bad:good) printf '初回起動: 不通または未確定 / MWI適用後: OK（標準network再生成・route補完後に回復）\n' | tee "$LOG_DIR/network-comparison.txt" ;;
+        bad:good) printf '初回起動: 不通または未確定 / MWI適用後: OK（標準network再生成・UFW対策後に回復）\n' | tee "$LOG_DIR/network-comparison.txt" ;;
         good:bad) printf '初回起動: OK / MWI適用後: 不通または未確定（MWI後続処理での回帰を疑う）\n' | tee "$LOG_DIR/network-comparison.txt" ;;
         bad:bad) printf '初回起動とMWI適用後: 不通または未確定（Waydroid初期DHCP/Android netd/host firewallを優先調査）\n' | tee "$LOG_DIR/network-comparison.txt" ;;
     esac
@@ -383,9 +425,9 @@ install_android11() {
     ip -details addr show waydroid0 >"$LOG_DIR/network-baseline-host-interface.txt" 2>&1 || true
     ip route get 1.1.1.1 >"$LOG_DIR/network-baseline-host-egress.txt" 2>&1 || true
     sudo sysctl net.ipv4.ip_forward >"$LOG_DIR/network-baseline-ip-forward.txt" 2>&1 || true
-    timeout 10 sudo waydroid shell -- sh -c 'ip -4 addr show dev eth0; ip -4 route; printf "net.dns1="; getprop net.dns1; printf "net.dns2="; getprop net.dns2' >"$LOG_DIR/network-baseline-android.txt" 2>&1 || true
-    timeout 8 sudo waydroid shell -- ping -c 1 -W 3 1.1.1.1 >"$LOG_DIR/network-baseline-ip-test.txt" 2>&1 || true
-    timeout 8 sudo waydroid shell -- ping -c 1 -W 1 play.googleapis.com >"$LOG_DIR/network-baseline-dns-test.txt" 2>&1 || true
+    printf '%s\n' 'ip -4 addr show dev eth0; ip -4 route show table all; ip -4 rule; printf "net.dns1="; getprop net.dns1; printf "net.dns2="; getprop net.dns2' | timeout 10 sudo waydroid shell >"$LOG_DIR/network-baseline-android.txt" 2>&1 || true
+    printf '%s\n' 'ping -c 1 -W 3 1.1.1.1' | timeout 8 sudo waydroid shell >"$LOG_DIR/network-baseline-ip-test.txt" 2>&1 || true
+    printf '%s\n' 'ping -c 1 -W 1 play.googleapis.com' | timeout 8 sudo waydroid shell >"$LOG_DIR/network-baseline-dns-test.txt" 2>&1 || true
     android_https_test "$LOG_DIR/network-baseline-https-test.txt" || true
     sudo waydroid shell -- pm path com.android.vending
 }
@@ -433,9 +475,9 @@ verify_runtime() {
 lifecycle_main() {
     case "${1:-}" in
         '') [[ "${RESET_WAYDROID:-0}" != 1 ]] || MODE=reset ;;
-        --diagnose) MODE=diagnose ;; --install) MODE=install ;; --reset) MODE=reset ;;
+        --diagnose) MODE=diagnose ;; --install) MODE=install ;; --reset) MODE=reset ;; --reinstall) MODE=reinstall ;;
         --repair|--repair-bridge) MODE=repair ;; --restore) MODE=restore; BACKUP="${2:-}"; [[ -n "$BACKUP" ]] || die '復元パスが必要です。' ;;
-        --help|-h) printf 'MWI 0.2.2\n--diagnose / --install / --repair / --reset / --restore BACKUP\n'; return ;;
+        --help|-h) printf 'MWI 0.2.5\n--diagnose / --install / --repair / --reset / --reinstall / --restore BACKUP\n'; return ;;
         *) die '不明な引数です。--help を参照してください。' ;;
     esac
     if [[ "$MODE" == restore ]]; then [[ $# == 2 ]] || die '引数が不正です。'; else [[ $# -le 1 ]] || die '引数が多すぎます。'; fi
@@ -445,9 +487,9 @@ lifecycle_main() {
         if sudo test -d /var/lib/waydroid || [[ -e "$USER_DATA" ]] || sudo test -e "$IMAGE_DIR/system.img" || sudo test -e "$IMAGE_DIR/vendor.img"; then
             local answer
             [[ -t 0 ]] || die '既存環境があります。--diagnose または修復モードを指定してください。'
-            printf '\n1: 診断のみ / 2: Houdini・libnb修復 / 3: 全環境退避して新規 / 0: 終了\n選択: '
+            printf '\n1: 診断のみ / 2: Houdini・libnb修復 / 3: 全環境退避して新規 / 4: 上書き再インストール（データも初期化） / 0: 終了\n選択: '
             IFS= read -r answer || die '選択を読み取れません。'
-            case "$answer" in 1) MODE=diagnose ;; 2) MODE=repair ;; 3) MODE=reset ;; 0) return ;; *) die '不明な選択です。' ;; esac
+            case "$answer" in 1) MODE=diagnose ;; 2) MODE=repair ;; 3) MODE=reset ;; 4) MODE=reinstall ;; 0) return ;; *) die '不明な選択です。' ;; esac
         else MODE=install; fi
     fi
     if [[ "$MODE" == diagnose ]]; then collect_logs; return 0; fi
@@ -464,25 +506,34 @@ lifecycle_main() {
         return
     fi
     if [[ "$MODE" == install ]]; then
-        if sudo test -d /var/lib/waydroid || [[ -e "$USER_DATA" ]] || sudo test -e "$IMAGE_DIR/system.img" || sudo test -e "$IMAGE_DIR/vendor.img"; then die '既存環境があります。修復か --reset を選んでください。'; fi
+        if sudo test -d /var/lib/waydroid || [[ -e "$USER_DATA" ]] || sudo test -e "$IMAGE_DIR/system.img" || sudo test -e "$IMAGE_DIR/vendor.img"; then die '既存環境があります。--repair / --reset / --reinstall を選んでください。'; fi
     elif [[ "$MODE" == repair ]]; then
-        sudo test -f /var/lib/waydroid/waydroid.cfg || die '設定がありません。初期化途中の場合は --reset で退避して再導入してください。'
+        sudo test -f /var/lib/waydroid/waydroid.cfg || die '設定がありません。--reset で退避して再導入、または --reinstall でデータも初期化して再導入してください。'
         phase '既存Android版確認' require_existing_android11
     fi
     printf '\nモード=%s\n' "$MODE"
     if [[ "$MODE" == reset ]]; then
         printf '既存Waydroid・現在ユーザーのデータ・指定イメージを同じ親フォルダ内に退避し、新環境を作ります。\n新環境にゲーム・ログイン状態は引き継ぎません。元環境は削除しません。\n'
+    elif [[ "$MODE" == reinstall ]]; then
+        printf '既存Waydroid・現在ユーザーのデータ・指定イメージを削除し、新環境を作ります。\nゲーム・ログイン状態も削除します。退避は行わず、この削除は --restore では戻せません。\n削除対象:\n  /var/lib/waydroid\n  %s\n  %s\n' "$USER_DATA" "$IMAGE_DIR"
     elif [[ "$MODE" == repair ]]; then
         printf 'Houdini・libnbと関連設定をバックアップ後に差し替えます。ゲームデータは保持します。\n'
     else printf '指定Android 11/GApps + Houdini + 同梱test_libnbを導入します。\n'; fi
     printf 'ネットワーク安定化のため Waydroid の背景化動作を stop にします。背景化するとAndroid sessionが停止し、背景で動作中のアプリは終了します。設定は修復前バックアップから戻せます。\n'
     confirm 'この内容で続行しますか' || die '変更を中止しました。'
     phase 'ホスト準備' install_packages
+    if [[ "$MODE" == reinstall ]]; then
+        # Fetch and check both archives before removing an existing environment.
+        phase '再導入用system取得' download "$SYSTEM_URL" "$CACHE_DIR/$SYSTEM_ZIP"
+        phase '再導入用vendor取得' download "$VENDOR_URL" "$CACHE_DIR/$VENDOR_ZIP"
+        phase 'Waydroid停止' stop_waydroid
+        phase '既存環境削除（データも初期化）' state_tool reinstall "$USER_DATA" "$UID" "$LOG_DIR/reinstall-paths.json" "$WORK_ROOT"
+    fi
     if [[ "$MODE" == reset ]]; then
         phase 'Waydroid停止' stop_waydroid
         phase '全環境退避' state_tool reset "$USER_DATA" "$UID" "$LOG_DIR/reset-paths.json"
     fi
-    if [[ "$MODE" == install || "$MODE" == reset ]]; then
+    if [[ "$MODE" == install || "$MODE" == reset || "$MODE" == reinstall ]]; then
         phase 'Android 11初期化' install_android11
     fi
     phase 'Waydroid停止' stop_waydroid
