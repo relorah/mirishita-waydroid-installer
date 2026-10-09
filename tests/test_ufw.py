@@ -70,7 +70,7 @@ prepare_ufw
 prepare_ufw
 ufw_declined_hint
 ''')
-            Path(tmp, 'existing').write_text(existing)
+            Path(tmp, 'existing').write_text(existing + '\n' if existing else '')
             env = dict(os.environ, ROOT=str(ROOT), CASE_DIR=tmp, ACTIVE='active' if active else 'inactive')
             if tty:
                 import pty
