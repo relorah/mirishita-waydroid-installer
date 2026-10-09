@@ -31,6 +31,10 @@ class RuleTests(unittest.TestCase):
         text = '\n'.join('ufw ' + rule for rule in rules.required('eth0'))
         self.assertEqual(rules.missing(text, 'eth1'), [rules.required('eth1')[-1]])
 
+    def test_existing_dns_from_any_covers_required_subnet(self):
+        text = '\n'.join('ufw ' + rule.replace('from 192.168.240.0/24 ', '') for rule in rules.required('eth0'))
+        self.assertEqual(rules.missing(text, 'eth0'), [])
+
 
 @unittest.skipUnless(sys.platform == 'linux' and shutil.which('bash'), 'Linux Bash/PTY required')
 class SmokeTests(unittest.TestCase):

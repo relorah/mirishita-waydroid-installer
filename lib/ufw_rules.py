@@ -2,6 +2,7 @@
 """Print missing Waydroid rules from `ufw show added`, ignoring comments."""
 import shlex
 import sys
+import ipaddress
 
 
 def normalized(command):
@@ -58,7 +59,23 @@ def missing(text, egress):
             existing.append(normalized(line))
         except ValueError:
             continue
-    return [rule for rule in required(egress) if normalized(rule) not in existing]
+    def covers(actual, wanted):
+        if actual is None:
+            return False
+        if {k: v for k, v in actual.items() if k not in ('from', 'to')} != {k: v for k, v in wanted.items() if k not in ('from', 'to')}:
+            return False
+        for key in ('from', 'to'):
+            if actual[key] == wanted[key] or actual[key] == 'any':
+                continue
+            try:
+                target = ipaddress.ip_network('0.0.0.0/0' if wanted[key] == 'any' else wanted[key], strict=False)
+                allowed = ipaddress.ip_network(actual[key], strict=False)
+                if target.version != allowed.version or not target.subnet_of(allowed):
+                    return False
+            except ValueError:
+                return False
+        return True
+    return [rule for rule in required(egress) if not any(covers(item, normalized(rule)) for item in existing)]
 
 
 if __name__ == '__main__':
