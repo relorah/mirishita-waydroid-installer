@@ -1,43 +1,52 @@
-# Mirishita Waydroid Installer (MWI)
+# MWI 0.2.2
 
-x86_64 Linux PCで「アイドルマスター ミリオンライブ！ シアターデイズ（以下、ミリシタ）」をWaydroidにて動かす環境を整えるツールです。
+CachyOS / Arch Linux / Fedora + Waydroid Android 11環境で「アイドルマスター ミリオンライブ！ シアターデイズ（ミリシタ）」の動作環境を構築します。必要なホストパッケージを確認し、システム更新と併せて導入します。
 
 ## 対応環境
 
 - x86_64、AMD Radeon（`amdgpu`）
 - CachyOS / Arch Linux
-- dnf版Fedora（KDE Plasmaを含む）
-- Ubuntu 24.04 LTS（実験対応）
+- dnf版Fedora（KDE Plasmaを含む、実機未検証。Kinoiteなどrpm-ostree版は対象外）
 - Wayland
 
-動作確認済み環境はCachyOS + KDE Plasmaのみです。Ryzen 7 9700X + Radeon RX 6600 XTおよびAMD BC250で確認しています。Arch Linux、Fedora、Ubuntuは実機での導入検証が未実施です。Ubuntuは24.04 LTS（noble）のみ実験対応しています。
+## テスト環境
 
-## インストール方法
+- AMD Ryzen 7 9700X + Radeon RX 6600 XT
+- AMD BC250
+
+インストーラーはCachyOSで実行済み。今回追加したWaydroidネットワークFixとFedora対応は実機未確認です。
+
+## 使い方
+
+x86_64・AMD GPU・Wayland・binderfs対応カーネル・sudo権限が必要です。
+ZIPを展開し、`mirishita-waydroid-installer`内で通常ユーザーとして実行します。
 
 ```bash
-git clone https://github.com/relorah/mirishita-waydroid-installer.git
-
-cd mirishita-waydroid-installer
 chmod +x install.sh
 ./install.sh
 ```
 
-CachyOSにWaydroidパッケージが既に入っていても、そのまま実行できます。手動での再インストールは不要です。installerの`pacman -Syu --needed`はシステム全体を更新し、更新不要のパッケージは再インストールしません。初期化済みのWaydroid設定またはユーザーデータがある場合は、既存データ保護のため停止します。完全に作り直す場合は `RESET_WAYDROID=1 ./install.sh` を実行してください（既存データは `~/.local/state/mwi/backups/` へ退避します）。
+既存Waydroidがあれば、診断・修復・退避して新規導入を選べます。
 
-UbuntuではWaylandセッションにログインして実行してください。Ubuntuの`universe`と[公式Waydroidリポジトリ](https://docs.waydro.id/usage/install-on-desktops#debian-ubuntu-and-derivatives)を有効にし、`apt-get`で必要なパッケージを導入します。Ubuntu 22.04、26.04やUbuntu派生ディストリビューションは今回の実験対応に含みません。
+## 導入内容
 
-## 実行内容
+新規導入はAndroid 11 GAPPS（2025-06-28版）。Houdiniは固定コミットのwaydroid_scriptから取得し、同梱libnbとNativeBridge設定を適用します。
 
-Android 11 + Google Play、Houdini（`waydroid_script`経由）、同梱のpatched `test_libnb`を導入し、Waydroidのネットワーク設定をします。UFW/firewalldが有効な場合は`waydroid0`用ルールを設定し、DHCP・default route・Internet・DNSを確認します。ミリシタAPKは同梱・要求・取得・インストールしません。セットアップ後、ユーザー自身がGoogle Playから導入してください。
+ネットワークはDHCP・route・DNS・forwarding・NAT・HTTPSを確認し、必要に応じて再起動・route補完・UFW転送許可を行います。firewalldでは確認後に`waydroid0`のみ実行中のtrusted zoneへ追加します（Androidからホストへの通信も許可、firewalld再起動で解除）。既存の独自zone・nftablesルールは上書きしません。
 
-Houdiniはセットアップ時にupstreamの[casualsnek/waydroid_script](https://github.com/casualsnek/waydroid_script)から固定revision `48dbfaf34a6ddbe78688c530f9ba1c26522aafb2`をdetached checkoutして導入します。MWIはHoudini binariesを再配布しません。
+**背景化時はAndroid sessionが停止します。** route補完は現在の起動中のみ有効で、追加したUFWルールは復元対象外です。
 
-## インストール後
+## 修復・復元
 
-Google Playにログインし、ミリシタをインストールしてください。
+- `./install.sh --diagnose`：診断
+- `./install.sh --repair`：Android 11環境のHoudini・libnb修復とネットワーク確認
+- `./install.sh --reset`：既存環境を退避して新規導入（`RESET_WAYDROID=1 ./install.sh`も同じ）
+- `./install.sh --restore BACKUP`：修復前の設定・overlayを復元
 
-## Credits / License
+reset後はゲーム・ログイン状態を引き継ぎません。resetの退避は`--restore`の対象外です。
+バックアップは`/var/lib/mwi/backups/`、ログは通常`~/.local/state/mwi/logs/`に保存します。
 
-Waydroid、[casualsnek/waydroid_script](https://github.com/casualsnek/waydroid_script)、[qwerty12356-wart/test_libnb](https://github.com/qwerty12356-wart/test_libnb)に感謝します。
+## 出典
 
-MWIにはルートの`LICENSE`を適用します。`third_party/test_libnb/`にはソースと各ライセンスを収録しています。
+[mogareta7731氏](https://zenn.dev/mogareta7731/articles/f502aac11bb8ae)が配布したAndroid-x86 ISOに同梱されていたパッチ済み`test_nb`を、バイナリ・LICENSEとも無改変で使用しています。元プロジェクトは[qwerty12356-wart氏のtest_libnb](https://github.com/qwerty12356-wart/test_libnb)、BSD 2-Clauseです。MWI本体はMIT Licenseです。
+両氏および[Waydroid](https://github.com/waydroid/waydroid)・[waydroid_script](https://github.com/casualsnek/waydroid_script)の作者・貢献者に感謝します。
